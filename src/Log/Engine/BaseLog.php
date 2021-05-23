@@ -18,7 +18,9 @@ namespace Cake\Log\Engine;
 
 use ArrayObject;
 use Cake\Core\InstanceConfigTrait;
-use DateTimeImmutable;
+use Cake\Log\Formatter\AbstractFormatter;
+use Cake\Log\Formatter\DefaultFormatter;
+use InvalidArgumentException;
 use JsonSerializable;
 use Psr\Log\AbstractLogger;
 use Serializable;
@@ -38,8 +40,13 @@ abstract class BaseLog extends AbstractLogger
     protected $_defaultConfig = [
         'levels' => [],
         'scopes' => [],
-        'dateFormat' => 'Y-m-d H:i:s',
+        'formatter' => DefaultFormatter::class,
     ];
+
+    /**
+     * @var \Cake\Log\Formatter\AbstractFormatter
+     */
+    protected $formatter;
 
     /**
      * __construct method
@@ -60,6 +67,23 @@ abstract class BaseLog extends AbstractLogger
 
         if (!empty($this->_config['types']) && empty($this->_config['levels'])) {
             $this->_config['levels'] = (array)$this->_config['types'];
+        }
+
+        // Default to DefaultFormatter for BC with custom loggers that don't set `formatter` in $_defaultConfig
+        $formatterConfig = $this->_config['formatter'] ?? DefaultFormatter::class;
+        if (!is_array($formatterConfig)) {
+            $formatterConfig = ['className' => $formatterConfig];
+        }
+
+        /** @var class-string<\Cake\Log\Formatter\AbstractFormatter> $formatterClass */
+        $formatterClass = $formatterConfig['className'];
+        $this->formatter = new $formatterClass($formatterConfig);
+        if (!$this->formatter instanceof AbstractFormatter) {
+            throw new InvalidArgumentException(sprintf(
+                'Formatter must extend `%s`, got `%s` instead',
+                AbstractFormatter::class,
+                get_class($this->formatter)
+            ));
         }
     }
 
@@ -94,6 +118,18 @@ abstract class BaseLog extends AbstractLogger
      * @return string
      */
     protected function _format(string $message, array $context = []): string
+    {
+        return $this->resolve($message, $context);
+    }
+
+    /**
+     * Resolves interpolation expressions in message string.
+     *
+     * @param string $message Interpolated message
+     * @param array $context Interpolation expression values
+     * @return string
+     */
+    protected function resolve(string $message, array $context = []): string
     {
         if (strpos($message, '{') === false && strpos($message, '}') === false) {
             return $message;
@@ -161,17 +197,5 @@ abstract class BaseLog extends AbstractLogger
 
         /** @psalm-suppress InvalidArgument */
         return str_replace(array_keys($replacements), $replacements, $message);
-    }
-
-    /**
-     * Returns date formatted according to given `dateFormat` option format.
-     *
-     * This function affects `FileLog` or` ConsoleLog` datetime information format.
-     *
-     * @return string
-     */
-    protected function _getFormattedDate(): string
-    {
-        return (new DateTimeImmutable())->format($this->_config['dateFormat']);
     }
 }
